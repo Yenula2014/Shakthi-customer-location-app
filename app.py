@@ -5,7 +5,6 @@ import os
 # App Title & Layout Configuration
 st.set_page_config(page_title="Customer Location Finder", page_icon="📍", layout="wide")
 
-# Excel File name updated
 EXCEL_FILE = "NPL Report (1).xlsx Location Bandaragama.xlsx"
 LOCATIONS_FILE = "customer_locations.csv"
 
@@ -13,11 +12,34 @@ LOCATIONS_FILE = "customer_locations.csv"
 def load_data():
     if not os.path.exists(EXCEL_FILE):
         return None
+    
+    # Excel file එක කියවීම
     df = pd.read_excel(EXCEL_FILE)
-    # Search fields string බවට හැරවීම
-    df['Customer NIC'] = df['Customer NIC'].astype(str).str.strip().str.upper()
-    df['Customer Code'] = df['Customer Code'].astype(str).str.strip().str.upper()
-    df['Facility Code Real'] = df['Facility Status'].astype(str).str.strip().str.upper()
+    
+    # Column names වල අගට/මුලට ඇති Spaces ඉවත් කිරීම (Strip spaces from headers)
+    df.columns = df.columns.astype(str).str.strip()
+    
+    # Search fields string බවට හැරවීම (Safe Column Matching)
+    nic_col = [c for c in df.columns if 'NIC' in c.upper()]
+    cust_code_col = [c for c in df.columns if 'CUSTOMER CODE' in c.upper()]
+    facility_col = [c for c in df.columns if 'FACILITY STATUS' in c.upper() or 'FACILITY CODE' in c.upper()]
+
+    # Standard names සාදා ගැනීම
+    if nic_col:
+        df['Search_NIC'] = df[nic_col[0]].astype(str).str.strip().str.upper()
+    else:
+        df['Search_NIC'] = ""
+
+    if cust_code_col:
+        df['Search_CustCode'] = df[cust_code_col[0]].astype(str).str.strip().str.upper()
+    else:
+        df['Search_CustCode'] = ""
+
+    if facility_col:
+        df['Search_Facility'] = df[facility_col[0]].astype(str).str.strip().str.upper()
+    else:
+        df['Search_Facility'] = ""
+
     return df
 
 def load_locations():
@@ -36,7 +58,7 @@ st.title("📍 Customer Location Lookup & Entry App")
 st.markdown("Search by **NIC**, **Customer Code**, or **Facility Number** to view details and save location.")
 
 if df_customers is None:
-    st.error(f"Excel file '{EXCEL_FILE}' not found! Please make sure it is uploaded and named correctly.")
+    st.error(f"Excel file '{EXCEL_FILE}' not found! Please make sure it is uploaded and named correctly in your GitHub repository.")
 else:
     # Search Input Bar
     search_query = st.text_input("Enter NIC / Customer Code / Facility Number:", "").strip().upper()
@@ -44,12 +66,12 @@ else:
     if search_query:
         # Search Query Matching
         matched = df_customers[
-            (df_customers['Customer NIC'] == search_query) |
-            (df_customers['Customer Code'] == search_query) |
-            (df_customers['Facility Code Real'] == search_query) |
-            (df_customers['Customer NIC'].str.contains(search_query, na=False)) |
-            (df_customers['Customer Code'].str.contains(search_query, na=False)) |
-            (df_customers['Facility Code Real'].str.contains(search_query, na=False))
+            (df_customers['Search_NIC'] == search_query) |
+            (df_customers['Search_CustCode'] == search_query) |
+            (df_customers['Search_Facility'] == search_query) |
+            (df_customers['Search_NIC'].str.contains(search_query, na=False)) |
+            (df_customers['Search_CustCode'].str.contains(search_query, na=False)) |
+            (df_customers['Search_Facility'].str.contains(search_query, na=False))
         ]
 
         if matched.empty:
@@ -61,18 +83,31 @@ else:
                 st.divider()
                 col1, col2 = st.columns([1, 1])
 
+                # Get Values safely
+                cust_name = row.get('Customer Name', 'N/A')
+                cust_nic = row.get('Customer NIC', 'N/A')
+                cust_code = row.get('Customer Code', 'N/A')
+                fac_code = row.get('Facility Status', row.get('Facility Code', 'N/A'))
+                center = row.get('Center', 'N/A')
+                branch = row.get('Branch', 'N/A')
+                contact = row.get('Customer Contact No', 'N/A')
+                arrears = row.get('Total Arrears', 0)
+
                 with col1:
                     st.subheader("📋 Customer Details")
-                    st.write(f"**Customer Name:** {row['Customer Name']}")
-                    st.write(f"**NIC Number:** {row['Customer NIC']}")
-                    st.write(f"**Customer Code:** {row['Customer Code']}")
-                    st.write(f"**Facility Code:** {row['Facility Status']}")
-                    st.write(f"**Center / Branch:** {row['Center']} ({row['Branch']})")
-                    st.write(f"**Contact No:** {row['Customer Contact No']}")
-                    st.write(f"**Total Arrears:** LKR {row['Total Arrears']:,.2f}")
+                    st.write(f"**Customer Name:** {cust_name}")
+                    st.write(f"**NIC Number:** {cust_nic}")
+                    st.write(f"**Customer Code:** {cust_code}")
+                    st.write(f"**Facility Code:** {fac_code}")
+                    st.write(f"**Center / Branch:** {center} ({branch})")
+                    st.write(f"**Contact No:** {contact}")
+                    try:
+                        st.write(f"**Total Arrears:** LKR {float(arrears):,.2f}")
+                    except:
+                        st.write(f"**Total Arrears:** LKR {arrears}")
 
                 # Saved Location Data Check
-                existing_loc = df_locations[df_locations['Customer Code'] == str(row['Customer Code'])]
+                existing_loc = df_locations[df_locations['Customer Code'] == str(cust_code)]
 
                 with col2:
                     st.subheader("🗺️ Location Entry")
@@ -104,9 +139,9 @@ else:
 
                         if submit:
                             new_record = pd.DataFrame([{
-                                'Customer Code': str(row['Customer Code']),
-                                'Customer NIC': str(row['Customer NIC']),
-                                'Facility Code': str(row['Facility Status']),
+                                'Customer Code': str(cust_code),
+                                'Customer NIC': str(cust_nic),
+                                'Facility Code': str(fac_code),
                                 'Address': address,
                                 'Landmark': landmark,
                                 'Latitude': lat,
