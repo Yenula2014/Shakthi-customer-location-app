@@ -2,21 +2,31 @@ import streamlit as st
 import pandas as pd
 import os
 
-# App Title & Layout Configuration
 st.set_page_config(page_title="Customer Location Finder", page_icon="📍", layout="wide")
 
 EXCEL_FILE = "NPL Report (1).xlsx Location Bandaragama.xlsx"
 LOCATIONS_FILE = "customer_locations.csv"
 
-def clean_val(val):
-    if pd.isna(val):
+def find_column(df, possible_names):
+    """Excel එකේ Column හිස්තැන්/Case වෙනස් වුවත් හරියාකාරව සොයාගැනීමට"""
+    for col in df.columns:
+        clean_col = str(col).strip().lower()
+        for name in possible_names:
+            if clean_col == name.strip().lower():
+                return col
+    return None
+
+def clean_str(val):
+    """ඕනෑම Value එකක් (Float/Int/NaN) සුදුසු String එකක් බවට හැරවීමට"""
+    if pd.isna(val) or val is None:
         return ""
     if isinstance(val, float):
         if val.is_integer():
             val = int(val)
-    return str(val).strip().upper()
+    val_str = str(val).strip()
+    return "" if val_str.lower() in ["nan", "none", "null"] else val_str
 
-@st.cache_data(ttl=10)
+@st.cache_data(ttl=5)
 def load_data():
     if not os.path.exists(EXCEL_FILE):
         return None
@@ -26,31 +36,24 @@ def load_data():
     except Exception as e:
         st.error(f"Excel file එක කියවීමේ දෝෂයක්: {e}")
         return None
-    
-    df.columns = df.columns.astype(str).str.strip()
-    
-    # Process Search Columns
-    if 'Customer NIC' in df.columns:
-        df['Search_NIC'] = df['Customer NIC'].apply(clean_val)
-    else:
-        df['Search_NIC'] = ""
 
-    if 'Customer Code' in df.columns:
-        df['Search_CustomerCode'] = df['Customer Code'].apply(clean_val)
-    else:
-        df['Search_CustomerCode'] = ""
+    # Column Mapping (හැකියාව ඇති සියලුම Header Names)
+    nic_col = find_column(df, ['Customer NIC', 'NIC', 'NIC No', 'NIC Number'])
+    code_col = find_column(df, ['Customer Code', 'Code', 'Cust Code'])
+    facility_col = find_column(df, ['Facility Status', 'Facility Code', 'Facility No'])
+    name_col = find_column(df, ['Customer Name', 'Name', 'Full Name'])
 
-    if 'Facility Status' in df.columns:
-        df['Search_FacilityCode'] = df['Facility Status'].apply(clean_val)
-    elif 'Facility Code' in df.columns:
-        df['Search_FacilityCode'] = df['Facility Code'].apply(clean_val)
-    else:
-        df['Search_FacilityCode'] = ""
+    # Search සඳහා අවශ්‍ය Cleaned Columns සැකසීම
+    df['Search_NIC'] = df[nic_col].apply(clean_str) if nic_col else ""
+    df['Search_CustomerCode'] = df[code_col].apply(clean_str) if code_col else ""
+    df['Search_FacilityCode'] = df[facility_col].apply(clean_str) if facility_col else ""
+    df['Search_Name'] = df[name_col].apply(clean_str) if name_col else ""
 
-    if 'Customer Name' in df.columns:
-        df['Search_Name'] = df['Customer Name'].apply(clean_val)
-    else:
-        df['Search_Name'] = ""
+    # Real Columns Store කිරීම
+    df['Display_NIC'] = df[nic_col] if nic_col else ""
+    df['Display_Code'] = df[code_col] if code_col else ""
+    df['Display_Facility'] = df[facility_col] if facility_col else ""
+    df['Display_Name'] = df[name_col] if name_col else ""
 
     return df
 
@@ -73,34 +76,38 @@ if df_customers is None:
 else:
     st.info(f"📊 දත්ත පද්ධතියේ මුළු පාරිභෝගිකයින් ගණන: **{len(df_customers)}**")
 
-    # Mode Choice: Manual Search or Select from List
     search_type = st.radio("Search Method:", ["Type Query (NIC / Code / Name)", "Select Customer from List"], horizontal=True)
 
     matched = pd.DataFrame()
 
     if search_type == "Type Query (NIC / Code / Name)":
         search_input = st.text_input("Enter Search Key (e.g. 647180663V or C/MF/5/000077):", "")
-        query = clean_val(search_input)
+        query = search_input.strip().upper()
 
         if query:
             matched = df_customers[
-                (df_customers['Search_NIC'].str.contains(query, regex=False, na=False)) |
-                (df_customers['Search_CustomerCode'].str.contains(query, regex=False, na=False)) |
-                (df_customers['Search_FacilityCode'].str.contains(query, regex=False, na=False)) |
-                (df_customers['Search_Name'].str.contains(query, regex=False, na=False))
+                (df_customers['Search_NIC'].str.upper().str.contains(query, regex=False, na=False)) |
+                (df_customers['Search_CustomerCode'].str.upper().str.contains(query, regex=False, na=False)) |
+                (df_customers['Search_FacilityCode'].str.upper().str.contains(query, regex=False, na=False)) |
+                (df_customers['Search_Name'].str.upper().str.contains(query, regex=False, na=False))
             ]
 
     else:
-        # Dropdown selection for easy browsing
+        # Construct Label Options Correctly
         options = ["-- Select Customer --"] + [
-            f"{row['Search_NIC']} | {row['Search_CustomerCode']} | {row.get('Customer Name', '')}" 
+            f"{row['Search_NIC']} | {row['Search_CustomerCode']} | {row['Search_Name']}" 
             for _, row in df_customers.iterrows()
         ]
         selected_option = st.selectbox("Choose a customer:", options)
         
         if selected_option != "-- Select Customer --":
-            selected_nic = selected_option.split(" | ")[0]
-            matched = df_customers[df_customers['Search_NIC'] == selected_nic]
+            selected_nic = selected_option.split(" | ")[0].strip()
+            selected_code = selected_option.split(" | ")[1].strip()
+            
+            matched = df_customers[
+                (df_customers['Search_NIC'] == selected_nic) & 
+                (df_customers['Search_CustomerCode'] == selected_code)
+            ]
 
     # Display Results
     if not matched.empty:
@@ -112,10 +119,10 @@ else:
 
             with col1:
                 st.subheader("📋 Customer Details")
-                st.write(f"**Customer Name:** {row.get('Customer Name', 'N/A')}")
-                st.write(f"**NIC Number:** {row.get('Customer NIC', 'N/A')}")
-                st.write(f"**Customer Code:** {row.get('Customer Code', 'N/A')}")
-                st.write(f"**Facility Code:** {row.get('Facility Status', 'N/A')}")
+                st.write(f"**Customer Name:** {row.get('Display_Name', 'N/A')}")
+                st.write(f"**NIC Number:** {row.get('Display_NIC', 'N/A')}")
+                st.write(f"**Customer Code:** {row.get('Display_Code', 'N/A')}")
+                st.write(f"**Facility Code:** {row.get('Display_Facility', 'N/A')}")
                 st.write(f"**Center / Branch:** {row.get('Center', 'N/A')} ({row.get('Branch', 'N/A')})")
                 st.write(f"**Contact No:** {row.get('Customer Contact No', 'N/A')}")
                 
@@ -175,5 +182,5 @@ else:
                         st.success("Location successfully saved!")
                         st.rerun()
 
-    elif search_input if 'search_input' in locals() else False:
+    elif 'search_input' in locals() and search_input:
         st.error(f"No records found matching: **{search_input}**")
