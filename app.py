@@ -54,6 +54,11 @@ df_locs = load_locations()
 
 st.title("📍 Field Location Capture App")
 
+# Query Params වලින් Captured GPS Read කිරීම
+query_params = st.query_params
+auto_lat = query_params.get("lat", "")
+auto_lon = query_params.get("lon", "")
+
 if df is None:
     st.error("Excel File එක සොයාගත නොහැක!")
 else:
@@ -76,7 +81,6 @@ else:
                 saved_loc = df_locs[df_locs['Customer Code'] == cust_code_str]
 
                 st.markdown("---")
-                # Basic Customer Details
                 st.subheader(f"👤 {name_val}")
                 st.write(f"**NIC:** `{nic_val}` | **Code:** `{code_val}` | **Facility:** `{fac_val}`")
 
@@ -105,16 +109,16 @@ else:
                             st.markdown(f"[🚗 Open Google Maps Navigation]({maps_url})", unsafe_allow_html=True)
 
                 if not has_loc:
-                    st.info("ℹ️️ ස්ථානය තවම Save කර නොමැත.")
+                    st.info("ℹ️ ස්ථානය තවම Save කර නොමැත.")
 
                 # Location Entry Section
                 st.markdown("#### 📌 GPS & Location Entry")
 
-                # HTML5 Geolocation Script Button
+                # Auto-Fill GPS Button JavaScript Component
                 geo_html = f"""
                 <div style="margin-bottom:10px;">
-                    <button onclick="getLocation()" style="background-color:#0284C7;color:white;padding:8px 12px;border:none;border-radius:6px;font-weight:bold;cursor:pointer;width:100%;">
-                        📍 Get Current GPS Location
+                    <button onclick="getLocation()" style="background-color:#0284C7;color:white;padding:10px 14px;border:none;border-radius:6px;font-weight:bold;cursor:pointer;width:100%;font-size:15px;">
+                        📍 Get Current GPS Location & Auto-Fill
                     </button>
                     <p id="geo_status_{idx}" style="font-size:12px;color:gray;margin-top:4px;"></p>
                 </div>
@@ -122,25 +126,31 @@ else:
                 function getLocation() {{
                     var status = document.getElementById("geo_status_{idx}");
                     if (navigator.geolocation) {{
-                        status.innerHTML = "GPS ලබාගනිමින් පවතී...";
+                        status.innerHTML = "⌛ GPS ස්ථානය ලබාගනිමින් පවතී...";
                         navigator.geolocation.getCurrentPosition(showPosition, showError, {{enableHighAccuracy: true}});
                     }} else {{ 
                         status.innerHTML = "ඔබගේ Browser එක Geolocation සපයන්නේ නැත.";
                     }}
                 }}
                 function showPosition(position) {{
-                    var status = document.getElementById("geo_status_{idx}");
                     var lat = position.coords.latitude;
                     var lon = position.coords.longitude;
-                    status.innerHTML = "<b>අක්ෂාංශ (Lat):</b> " + lat + " | <b>දේශාංශ (Lon):</b> " + lon + "<br><small>පහත Form එකේ අදාළ තැන්වලට මෙම අංක Type/Copy කරන්න.</small>";
+                    var url = new URL(window.parent.location.href);
+                    url.searchParams.set('lat', lat);
+                    url.searchParams.set('lon', lon);
+                    window.parent.location.href = url.href;
                 }}
                 function showError(error) {{
                     var status = document.getElementById("geo_status_{idx}");
-                    status.innerHTML = "GPS දෝෂය: " + error.message;
+                    status.innerHTML = "❌ GPS දෝෂය: " + error.message;
                 }}
                 </script>
                 """
-                components.html(geo_html, height=100)
+                components.html(geo_html, height=80)
+
+                # Auto-Fill Logic: If GPS captured from URL, use it, else use saved value
+                fill_lat = auto_lat if auto_lat else existing_lat
+                fill_lon = auto_lon if auto_lon else existing_lon
 
                 # Location Form
                 with st.form(key=f"form_{idx}"):
@@ -149,9 +159,9 @@ else:
                     
                     c1, c2 = st.columns(2)
                     with c1:
-                        latitude = st.text_input("අක්ෂාංශ (Latitude)", value=existing_lat)
+                        latitude = st.text_input("අක්ෂාංශ (Latitude)", value=fill_lat)
                     with c2:
-                        longitude = st.text_input("දේශාංශ (Longitude)", value=existing_lon)
+                        longitude = st.text_input("දේශාංශ (Longitude)", value=fill_lon)
 
                     officer = st.text_input("Officer ID / Name", value="")
 
@@ -169,6 +179,7 @@ else:
                         df_locs = pd.concat([df_locs, new_record], ignore_index=True)
                         df_locs.to_csv(LOCATIONS_FILE, index=False)
                         st.success("ස්ථානය සාර්ථකව Save විය!")
+                        st.query_params.clear() # Clear temporary URL params after saving
                         st.rerun()
 
     else:
