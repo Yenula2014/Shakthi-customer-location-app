@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import os
 import glob
@@ -9,7 +10,6 @@ st.set_page_config(page_title="Customer Location Tracker", page_icon="📍", lay
 LOCATIONS_FILE = "customer_locations.csv"
 
 def clean_text(val):
-    """NaN, None හෝ Float අගයන් ආරක්ෂිතව Clean Text බවට හැරවීමට"""
     if pd.isna(val) or val is None:
         return ""
     val_str = str(val).strip()
@@ -52,13 +52,13 @@ def get_col_val(row, targets):
 df = load_data()
 df_locs = load_locations()
 
-st.title("📍 Location Tracker")
+st.title("📍 Field Location Capture App")
 
 if df is None:
     st.error("Excel File එක සොයාගත නොහැක!")
 else:
     # Search Box
-    search_query = st.text_input("🔍 Search Customer (NIC / Code / Facility No / Name):", "").strip().lower()
+    search_query = st.text_input("🔍 Customer සොයන්න (NIC / Code / Facility / Name):", "").strip().lower()
 
     if search_query:
         matched_df = df[df['Full_Search'].str.contains(search_query, regex=False, na=False)]
@@ -105,11 +105,45 @@ else:
                             st.markdown(f"[🚗 Open Google Maps Navigation]({maps_url})", unsafe_allow_html=True)
 
                 if not has_loc:
-                    st.info("ℹ️ ස්ථානය තවම Save කර නොමැත.")
+                    st.info("ℹ️️ ස්ථානය තවම Save කර නොමැත.")
+
+                # Location Entry Section
+                st.markdown("#### 📌 GPS & Location Entry")
+
+                # HTML5 Geolocation Script Button
+                geo_html = f"""
+                <div style="margin-bottom:10px;">
+                    <button onclick="getLocation()" style="background-color:#0284C7;color:white;padding:8px 12px;border:none;border-radius:6px;font-weight:bold;cursor:pointer;width:100%;">
+                        📍 Get Current GPS Location
+                    </button>
+                    <p id="geo_status_{idx}" style="font-size:12px;color:gray;margin-top:4px;"></p>
+                </div>
+                <script>
+                function getLocation() {{
+                    var status = document.getElementById("geo_status_{idx}");
+                    if (navigator.geolocation) {{
+                        status.innerHTML = "GPS ලබාගනිමින් පවතී...";
+                        navigator.geolocation.getCurrentPosition(showPosition, showError, {{enableHighAccuracy: true}});
+                    }} else {{ 
+                        status.innerHTML = "ඔබගේ Browser එක Geolocation සපයන්නේ නැත.";
+                    }}
+                }}
+                function showPosition(position) {{
+                    var status = document.getElementById("geo_status_{idx}");
+                    var lat = position.coords.latitude;
+                    var lon = position.coords.longitude;
+                    status.innerHTML = "<b>අක්ෂාංශ (Lat):</b> " + lat + " | <b>දේශාංශ (Lon):</b> " + lon + "<br><small>පහත Form එකේ අදාළ තැන්වලට මෙම අංක Type/Copy කරන්න.</small>";
+                }}
+                function showError(error) {{
+                    var status = document.getElementById("geo_status_{idx}");
+                    status.innerHTML = "GPS දෝෂය: " + error.message;
+                }}
+                </script>
+                """
+                components.html(geo_html, height=100)
 
                 # Location Form
                 with st.form(key=f"form_{idx}"):
-                    st.markdown("**Update / Save Location Details:**")
                     address = st.text_area("ලිපිනය / පාර (Address / Directions)", value=existing_addr, height=70)
                     landmark = st.text_input("ආසන්නතම සලකුණ (Landmark)", value=existing_land)
                     
