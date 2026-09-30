@@ -8,37 +8,51 @@ st.set_page_config(page_title="Customer Location Finder", page_icon="📍", layo
 EXCEL_FILE = "NPL Report (1).xlsx Location Bandaragama.xlsx"
 LOCATIONS_FILE = "customer_locations.csv"
 
-@st.cache_data
+def clean_val(val):
+    """Numbers සහ Text හරියාකාරව Clean කිරීමට Helper Function එකක්"""
+    if pd.isna(val):
+        return ""
+    if isinstance(val, float):
+        if val.is_integer():
+            val = int(val)
+    return str(val).strip().upper()
+
+@st.cache_data(ttl=60)
 def load_data():
     if not os.path.exists(EXCEL_FILE):
         return None
     
-    # Excel file එක කියවීම
-    df = pd.read_excel(EXCEL_FILE)
+    try:
+        df = pd.read_excel(EXCEL_FILE)
+    except Exception as e:
+        st.error(f"Excel file එක කියවීමේ දෝෂයක්: {e}")
+        return None
     
-    # Column names වල අගට/මුලට ඇති Spaces ඉවත් කිරීම (Strip spaces from headers)
+    # Column Names වල දෙපස අමතර spaces ඉවත් කිරීම
     df.columns = df.columns.astype(str).str.strip()
     
-    # Search fields string බවට හැරවීම (Safe Column Matching)
-    nic_col = [c for c in df.columns if 'NIC' in c.upper()]
-    cust_code_col = [c for c in df.columns if 'CUSTOMER CODE' in c.upper()]
-    facility_col = [c for c in df.columns if 'FACILITY STATUS' in c.upper() or 'FACILITY CODE' in c.upper()]
-
-    # Standard names සාදා ගැනීම
-    if nic_col:
-        df['Search_NIC'] = df[nic_col[0]].astype(str).str.strip().str.upper()
+    # Cleaning columns for smooth searching
+    if 'Customer NIC' in df.columns:
+        df['Search_NIC'] = df['Customer NIC'].apply(clean_val)
     else:
         df['Search_NIC'] = ""
 
-    if cust_code_col:
-        df['Search_CustCode'] = df[cust_code_col[0]].astype(str).str.strip().str.upper()
+    if 'Customer Code' in df.columns:
+        df['Search_CustomerCode'] = df['Customer Code'].apply(clean_val)
     else:
-        df['Search_CustCode'] = ""
+        df['Search_CustomerCode'] = ""
 
-    if facility_col:
-        df['Search_Facility'] = df[facility_col[0]].astype(str).str.strip().str.upper()
+    if 'Facility Status' in df.columns:
+        df['Search_FacilityCode'] = df['Facility Status'].apply(clean_val)
+    elif 'Facility Code' in df.columns:
+        df['Search_FacilityCode'] = df['Facility Code'].apply(clean_val)
     else:
-        df['Search_Facility'] = ""
+        df['Search_FacilityCode'] = ""
+
+    if 'Customer Name' in df.columns:
+        df['Search_Name'] = df['Customer Name'].apply(clean_val)
+    else:
+        df['Search_Name'] = ""
 
     return df
 
@@ -55,23 +69,25 @@ df_customers = load_data()
 df_locations = load_locations()
 
 st.title("📍 Customer Location Lookup & Entry App")
-st.markdown("Search by **NIC**, **Customer Code**, or **Facility Number** to view details and save location.")
+st.markdown("Search by **NIC**, **Customer Code**, **Facility Number**, or **Customer Name**.")
 
 if df_customers is None:
-    st.error(f"Excel file '{EXCEL_FILE}' not found! Please make sure it is uploaded and named correctly in your GitHub repository.")
+    st.error(f"Excel File එක '{EXCEL_FILE}' නමින් සොයාගත නොහැක! කාරුණිකව GitHub එකට Upload කර ඇති File Name එක පරීක්ෂා කරන්න.")
 else:
+    # Debug / Status view
+    st.caption(f"📊 Total Loaded Records in Database: {len(df_customers)}")
+
     # Search Input Bar
-    search_query = st.text_input("Enter NIC / Customer Code / Facility Number:", "").strip().upper()
+    search_input = st.text_input("Enter Search Key (NIC / Customer Code / Facility No / Name):", "")
+    search_query = search_input.strip().upper()
 
     if search_query:
-        # Search Query Matching
+        # Flexible Partial Matching (Contains)
         matched = df_customers[
-            (df_customers['Search_NIC'] == search_query) |
-            (df_customers['Search_CustCode'] == search_query) |
-            (df_customers['Search_Facility'] == search_query) |
-            (df_customers['Search_NIC'].str.contains(search_query, na=False)) |
-            (df_customers['Search_CustCode'].str.contains(search_query, na=False)) |
-            (df_customers['Search_Facility'].str.contains(search_query, na=False))
+            (df_customers['Search_NIC'].str.contains(search_query, regex=False, na=False)) |
+            (df_customers['Search_CustomerCode'].str.contains(search_query, regex=False, na=False)) |
+            (df_customers['Search_FacilityCode'].str.contains(search_query, regex=False, na=False)) |
+            (df_customers['Search_Name'].str.contains(search_query, regex=False, na=False))
         ]
 
         if matched.empty:
@@ -83,31 +99,24 @@ else:
                 st.divider()
                 col1, col2 = st.columns([1, 1])
 
-                # Get Values safely
-                cust_name = row.get('Customer Name', 'N/A')
-                cust_nic = row.get('Customer NIC', 'N/A')
-                cust_code = row.get('Customer Code', 'N/A')
-                fac_code = row.get('Facility Status', row.get('Facility Code', 'N/A'))
-                center = row.get('Center', 'N/A')
-                branch = row.get('Branch', 'N/A')
-                contact = row.get('Customer Contact No', 'N/A')
-                arrears = row.get('Total Arrears', 0)
-
                 with col1:
                     st.subheader("📋 Customer Details")
-                    st.write(f"**Customer Name:** {cust_name}")
-                    st.write(f"**NIC Number:** {cust_nic}")
-                    st.write(f"**Customer Code:** {cust_code}")
-                    st.write(f"**Facility Code:** {fac_code}")
-                    st.write(f"**Center / Branch:** {center} ({branch})")
-                    st.write(f"**Contact No:** {contact}")
+                    st.write(f"**Customer Name:** {row.get('Customer Name', 'N/A')}")
+                    st.write(f"**NIC Number:** {row.get('Customer NIC', 'N/A')}")
+                    st.write(f"**Customer Code:** {row.get('Customer Code', 'N/A')}")
+                    st.write(f"**Facility Code:** {row.get('Facility Status', 'N/A')}")
+                    st.write(f"**Center / Branch:** {row.get('Center', 'N/A')} ({row.get('Branch', 'N/A')})")
+                    st.write(f"**Contact No:** {row.get('Customer Contact No', 'N/A')}")
+                    
+                    arrears = row.get('Total Arrears', 0)
                     try:
                         st.write(f"**Total Arrears:** LKR {float(arrears):,.2f}")
                     except:
-                        st.write(f"**Total Arrears:** LKR {arrears}")
+                        st.write(f"**Total Arrears:** {arrears}")
 
-                # Saved Location Data Check
-                existing_loc = df_locations[df_locations['Customer Code'] == str(cust_code)]
+                # Saved Location Check
+                cust_code_str = str(row.get('Search_CustomerCode', ''))
+                existing_loc = df_locations[df_locations['Customer Code'] == cust_code_str]
 
                 with col2:
                     st.subheader("🗺️ Location Entry")
@@ -139,9 +148,9 @@ else:
 
                         if submit:
                             new_record = pd.DataFrame([{
-                                'Customer Code': str(cust_code),
-                                'Customer NIC': str(cust_nic),
-                                'Facility Code': str(fac_code),
+                                'Customer Code': cust_code_str,
+                                'Customer NIC': str(row.get('Search_NIC', '')),
+                                'Facility Code': str(row.get('Search_FacilityCode', '')),
                                 'Address': address,
                                 'Landmark': landmark,
                                 'Latitude': lat,
