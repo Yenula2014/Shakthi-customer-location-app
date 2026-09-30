@@ -3,173 +3,142 @@ import pandas as pd
 import os
 import glob
 
+# Page Config
 st.set_page_config(page_title="Customer Location Finder", page_icon="📍", layout="wide")
 
 LOCATIONS_FILE = "customer_locations.csv"
 
-def find_excel_file():
-    """Directory එකේ ඇති ඕනෑම Excel ගොනුවක් ස්වයංක්‍රීයව සොයාගැනීම"""
-    excel_files = glob.glob("*.xlsx") + glob.glob("*.xls")
-    if excel_files:
-        return excel_files[0] # පළමුවෙන්ම හමුවන Excel file එක ගන්නවා
-    return None
-
-def clean_str(val):
-    if pd.isna(val) or val is None:
-        return ""
-    if isinstance(val, float):
-        if val.is_integer():
-            val = int(val)
-    val_str = str(val).strip()
-    return "" if val_str.lower() in ["nan", "none", "null"] else val_str
-
-@st.cache_data(ttl=5)
-def load_data():
-    excel_path = find_excel_file()
-    if not excel_path:
-        return None, "Excel file එකක් Folder එකේ සොයාගත නොහැක!"
+# Cache එක ඉවත් කර සෑම විටම අලුතින් Read කිරීමට (ttl=0)
+@st.cache_data(ttl=0)
+def get_dataset():
+    # Folder එකේ ඇති Excel File සොයා ගැනීම
+    files = glob.glob("*.xlsx") + glob.glob("*.xls")
+    if not files:
+        return None, "No Excel file found in root directory!"
+    
+    file_path = files[0]
     
     try:
-        df = pd.read_excel(excel_path)
+        # Sheet එක Read කිරීම
+        df = pd.read_excel(file_path)
     except Exception as e:
-        return None, f"Excel file එක කියවීමේ දෝෂයක්: {e}"
+        return None, f"Error reading excel: {e}"
 
-    # Column names වල spaces ඉවත් කිරීම
+    # Column names clean කිරීම
     df.columns = df.columns.astype(str).str.strip()
 
-    # Search සඳහා අවශ්‍ය Data සකසා ගැනීම
-    df['Search_NIC'] = df['Customer NIC'].apply(clean_str) if 'Customer NIC' in df.columns else ""
-    df['Search_CustomerCode'] = df['Customer Code'].apply(clean_str) if 'Customer Code' in df.columns else ""
-    df['Search_FacilityCode'] = df['Facility Status'].apply(clean_str) if 'Facility Status' in df.columns else ""
-    df['Search_Name'] = df['Customer Name'].apply(clean_str) if 'Customer Name' in df.columns else ""
+    # Data Clean කර ගැනීම (Search පහසු කිරීමට)
+    def clean_val(v):
+        if pd.isna(v) or v is None:
+            return ""
+        if isinstance(v, float) and v.is_integer():
+            v = int(v)
+        return str(v).strip()
 
-    return df, excel_path
+    df['NIC_Clean'] = df['Customer NIC'].apply(clean_val) if 'Customer NIC' in df.columns else ""
+    df['Code_Clean'] = df['Customer Code'].apply(clean_val) if 'Customer Code' in df.columns else ""
+    df['Facility_Clean'] = df['Facility Status'].apply(clean_val) if 'Facility Status' in df.columns else ""
+    df['Name_Clean'] = df['Customer Name'].apply(clean_val) if 'Customer Name' in df.columns else ""
+
+    return df, os.path.basename(file_path)
 
 def load_locations():
     if os.path.exists(LOCATIONS_FILE):
         return pd.read_csv(LOCATIONS_FILE, dtype=str)
-    else:
-        return pd.DataFrame(columns=[
-            'Customer Code', 'Customer NIC', 'Facility Code', 
-            'Address', 'Landmark', 'Latitude', 'Longitude', 'Updated By'
-        ])
+    return pd.DataFrame(columns=[
+        'Customer Code', 'Customer NIC', 'Facility Code', 
+        'Address', 'Landmark', 'Latitude', 'Longitude', 'Updated By'
+    ])
 
-df_customers, file_msg = load_data()
-df_locations = load_locations()
+# Streamlit App UI
+st.title("📍 Customer Location Lookup & Entry")
 
-st.title("📍 Customer Location Lookup & Entry App")
+df, filename = get_dataset()
+df_locs = load_locations()
 
-if df_customers is None:
-    st.error(file_msg)
-    st.info("💡 කරුණාකර `.xlsx` Excel ගොනුව GitHub Repository එකට හරියාකාරව Upload කර ඇත්දැයි බලන්න.")
+if df is None:
+    st.error(filename)
 else:
-    st.success(f"📁 Loaded File: **{file_msg}** | 📊 Total Customers: **{len(df_customers)}**")
+    st.success(f"📁 Loaded File: **{filename}** | 📊 Total Customers: **{len(df)}**")
 
-    search_type = st.radio("Search Method:", ["Type Query (NIC / Code / Name)", "Select Customer from List"], horizontal=True)
+    # Search Bar
+    query = st.text_input("🔍 Search Customer (Type NIC / Customer Code / Name / Facility No):", "").strip()
 
-    matched = pd.DataFrame()
+    if query:
+        q = query.lower()
+        # Case-insensitive substring matching
+        match_mask = (
+            df['NIC_Clean'].str.lower().str.contains(q, na=False) |
+            df['Code_Clean'].str.lower().str.contains(q, na=False) |
+            df['Facility_Clean'].str.lower().str.contains(q, na=False) |
+            df['Name_Clean'].str.lower().str.contains(q, na=False)
+        )
+        matched_df = df[match_mask]
 
-    if search_type == "Type Query (NIC / Code / Name)":
-        search_input = st.text_input("Enter Search Key (e.g. 647180663V, C/MF/5/000077, or Name):", "")
-        query = search_input.strip().upper()
+        if matched_df.empty:
+            st.warning(f"❌ '{query}' සඳහා කිසිදු පාරිභෝගිකයෙකු හමු නොවීය (No records found).")
+        else:
+            st.success(f"✅ පාරිභෝගිකයින් {len(matched_df)} දෙනෙකු හමු විය.")
 
-        if query:
-            matched = df_customers[
-                (df_customers['Search_NIC'].str.upper().str.contains(query, regex=False, na=False)) |
-                (df_customers['Search_CustomerCode'].str.upper().str.contains(query, regex=False, na=False)) |
-                (df_customers['Search_FacilityCode'].str.upper().str.contains(query, regex=False, na=False)) |
-                (df_customers['Search_Name'].str.upper().str.contains(query, regex=False, na=False))
-            ]
+            for idx, row in matched_df.iterrows():
+                st.divider()
+                col1, col2 = st.columns([1, 1])
+
+                with col1:
+                    st.subheader("📋 Customer Information")
+                    st.write(f"**Name:** {row.get('Customer Name', 'N/A')}")
+                    st.write(f"**NIC:** {row.get('Customer NIC', 'N/A')}")
+                    st.write(f"**Customer Code:** {row.get('Customer Code', 'N/A')}")
+                    st.write(f"**Facility Status/No:** {row.get('Facility Status', 'N/A')}")
+                    st.write(f"**Center:** {row.get('Center', 'N/A')} ({row.get('Branch', 'N/A')})")
+                    st.write(f"**Contact No:** {row.get('Customer Contact No', 'N/A')}")
+                    st.write(f"**Total Arrears:** {row.get('Total Arrears', 'N/A')}")
+
+                cust_code = str(row['Code_Clean'])
+                saved_loc = df_locs[df_locs['Customer Code'] == cust_code]
+
+                with col2:
+                    st.subheader("🗺️ Location Details")
+
+                    if not saved_loc.empty:
+                        loc_data = saved_loc.iloc[-1]
+                        st.info("📍 **Saved Location:**")
+                        st.write(f"**Address:** {loc_data.get('Address', 'N/A')}")
+                        st.write(f"**Landmark:** {loc_data.get('Landmark', 'N/A')}")
+                        if loc_data.get('Latitude') and loc_data.get('Longitude'):
+                            st.write(f"**GPS:** {loc_data['Latitude']}, {loc_data['Longitude']}")
+                            st.markdown(f"[🔗 View in Google Maps](https://www.google.com/maps?q={loc_data['Latitude']},{loc_data['Longitude']})")
+                    else:
+                        st.warning("⚠️ නොදන්නා ස්ථානයකි (No location saved yet).")
+
+                    with st.form(key=f"form_{idx}"):
+                        st.markdown("**Enter / Update Location:**")
+                        addr = st.text_area("Address / Directions", value=saved_loc.iloc[-1]['Address'] if not saved_loc.empty else "")
+                        land = st.text_input("Landmark", value=saved_loc.iloc[-1]['Landmark'] if not saved_loc.empty else "")
+                        
+                        clat, clon = st.columns(2)
+                        with clat:
+                            lat = st.text_input("Latitude", value=saved_loc.iloc[-1]['Latitude'] if not saved_loc.empty else "")
+                        with clon:
+                            lon = st.text_input("Longitude", value=saved_loc.iloc[-1]['Longitude'] if not saved_loc.empty else "")
+                        
+                        officer = st.text_input("Officer Name/ID", value="")
+                        
+                        if st.form_submit_button("Save Location"):
+                            new_row = pd.DataFrame([{
+                                'Customer Code': cust_code,
+                                'Customer NIC': str(row['NIC_Clean']),
+                                'Facility Code': str(row['Facility_Clean']),
+                                'Address': addr,
+                                'Landmark': land,
+                                'Latitude': lat,
+                                'Longitude': lon,
+                                'Updated By': officer
+                            }])
+                            df_locs = pd.concat([df_locs, new_row], ignore_index=True)
+                            df_locs.to_csv(LOCATIONS_FILE, index=False)
+                            st.success("Location saved successfully!")
+                            st.rerun()
 
     else:
-        options = ["-- Select Customer --"] + [
-            f"{row['Search_NIC']} | {row['Search_CustomerCode']} | {row['Search_Name']}" 
-            for _, row in df_customers.iterrows()
-        ]
-        selected_option = st.selectbox("Choose a customer from list:", options)
-        
-        if selected_option != "-- Select Customer --":
-            parts = selected_option.split(" | ")
-            selected_nic = parts[0].strip()
-            selected_code = parts[1].strip()
-            
-            matched = df_customers[
-                (df_customers['Search_NIC'] == selected_nic) & 
-                (df_customers['Search_CustomerCode'] == selected_code)
-            ]
-
-    # Display Results
-    if not matched.empty:
-        st.success(f"Found {len(matched)} matching record(s).")
-        
-        for idx, row in matched.iterrows():
-            st.divider()
-            col1, col2 = st.columns([1, 1])
-
-            with col1:
-                st.subheader("📋 Customer Details")
-                st.write(f"**Customer Name:** {row.get('Customer Name', 'N/A')}")
-                st.write(f"**NIC Number:** {row.get('Customer NIC', 'N/A')}")
-                st.write(f"**Customer Code:** {row.get('Customer Code', 'N/A')}")
-                st.write(f"**Facility Code:** {row.get('Facility Status', 'N/A')}")
-                st.write(f"**Center / Branch:** {row.get('Center', 'N/A')} ({row.get('Branch', 'N/A')})")
-                st.write(f"**Contact No:** {row.get('Customer Contact No', 'N/A')}")
-                
-                arrears = row.get('Total Arrears', 0)
-                try:
-                    st.write(f"**Total Arrears:** LKR {float(arrears):,.2f}")
-                except:
-                    st.write(f"**Total Arrears:** {arrears}")
-
-            cust_code_str = str(row.get('Search_CustomerCode', ''))
-            existing_loc = df_locations[df_locations['Customer Code'] == cust_code_str]
-
-            with col2:
-                st.subheader("🗺️ Location Entry")
-                
-                if not existing_loc.empty:
-                    current_loc = existing_loc.iloc[-1]
-                    st.info("📍 **Current Saved Location:**")
-                    st.write(f"**Address:** {current_loc.get('Address', 'N/A')}")
-                    st.write(f"**Landmark:** {current_loc.get('Landmark', 'N/A')}")
-                    if current_loc.get('Latitude') and current_loc.get('Longitude'):
-                        st.write(f"**GPS:** {current_loc['Latitude']}, {current_loc['Longitude']}")
-                        maps_url = f"https://www.google.com/maps?q={current_loc['Latitude']},{current_loc['Longitude']}"
-                        st.markdown(f"[🔗 View in Google Maps]({maps_url})", unsafe_allow_html=True)
-                else:
-                    st.warning("⚠️ නොදන්නා ස්ථානයකි (No location saved yet). පහත Form එකෙන් එකතු කරන්න.")
-
-                with st.form(key=f"loc_form_{idx}"):
-                    st.markdown("**Enter / Update Location Information**")
-                    address = st.text_area("Address / Directions", value=existing_loc.iloc[-1]['Address'] if not existing_loc.empty else "")
-                    landmark = st.text_input("Nearest Landmark", value=existing_loc.iloc[-1]['Landmark'] if not existing_loc.empty else "")
-                    
-                    c_lat, c_long = st.columns(2)
-                    with c_lat:
-                        lat = st.text_input("Latitude (Optional)", value=existing_loc.iloc[-1]['Latitude'] if not existing_loc.empty else "")
-                    with c_long:
-                        lon = st.text_input("Longitude (Optional)", value=existing_loc.iloc[-1]['Longitude'] if not existing_loc.empty else "")
-
-                    updated_by = st.text_input("Officer Name / ID", value="")
-                    
-                    submit = st.form_submit_button("Save Location")
-
-                    if submit:
-                        new_record = pd.DataFrame([{
-                            'Customer Code': cust_code_str,
-                            'Customer NIC': str(row.get('Search_NIC', '')),
-                            'Facility Code': str(row.get('Search_FacilityCode', '')),
-                            'Address': address,
-                            'Landmark': landmark,
-                            'Latitude': lat,
-                            'Longitude': lon,
-                            'Updated By': updated_by
-                        }])
-
-                        df_locations = pd.concat([df_locations, new_record], ignore_index=True)
-                        df_locations.to_csv(LOCATIONS_FILE, index=False)
-                        st.success("Location successfully saved!")
-                        st.rerun()
-
-    elif 'search_input' in locals() and search_input:
-        st.error(f"No records found matching: **{search_input}**")
+        st.info("💡 සෙවීම සඳහා උඩ Search Bar එකේ NIC / Name / Customer Code ටයිප් කරන්න.")
