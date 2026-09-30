@@ -114,11 +114,11 @@ else:
                 # Location Entry Section
                 st.markdown("#### 📌 GPS & Location Entry")
 
-                # Auto-Fill GPS Button JavaScript Component
+                # Ultra-Fast GPS Capture Script
                 geo_html = f"""
                 <div style="margin-bottom:10px;">
                     <button onclick="getLocation()" style="background-color:#0284C7;color:white;padding:10px 14px;border:none;border-radius:6px;font-weight:bold;cursor:pointer;width:100%;font-size:15px;">
-                        📍 Get Current GPS Location & Auto-Fill
+                        ⚡ Fast Get GPS Location & Auto-Fill
                     </button>
                     <p id="geo_status_{idx}" style="font-size:12px;color:gray;margin-top:4px;"></p>
                 </div>
@@ -126,8 +126,19 @@ else:
                 function getLocation() {{
                     var status = document.getElementById("geo_status_{idx}");
                     if (navigator.geolocation) {{
-                        status.innerHTML = "⌛ GPS ස්ථානය ලබාගනිමින් පවතී...";
-                        navigator.geolocation.getCurrentPosition(showPosition, showError, {{enableHighAccuracy: true}});
+                        status.innerHTML = "⚡ ක්ෂණිකව GPS ලබාගනිමින් පවතී...";
+                        
+                        // Fast Options: low accuracy fallback with 5s timeout & cached position allowed
+                        var options = {{
+                            enableHighAccuracy: false,
+                            timeout: 5000,
+                            maximumAge: 60000
+                        }};
+                        
+                        navigator.geolocation.getCurrentPosition(showPosition, function(err) {{
+                            // Retry with fallback if low-accuracy timed out
+                            navigator.geolocation.getCurrentPosition(showPosition, showError, {{enableHighAccuracy: true, timeout: 8000}});
+                        }}, options);
                     }} else {{ 
                         status.innerHTML = "ඔබගේ Browser එක Geolocation සපයන්නේ නැත.";
                     }}
@@ -142,13 +153,13 @@ else:
                 }}
                 function showError(error) {{
                     var status = document.getElementById("geo_status_{idx}");
-                    status.innerHTML = "❌ GPS දෝෂය: " + error.message;
+                    status.innerHTML = "❌ GPS ලබාගත නොහැකි විය: " + error.message;
                 }}
                 </script>
                 """
                 components.html(geo_html, height=80)
 
-                # Auto-Fill Logic: If GPS captured from URL, use it, else use saved value
+                # Auto-Fill Logic
                 fill_lat = auto_lat if auto_lat else existing_lat
                 fill_lon = auto_lon if auto_lon else existing_lon
 
@@ -179,7 +190,7 @@ else:
                         df_locs = pd.concat([df_locs, new_record], ignore_index=True)
                         df_locs.to_csv(LOCATIONS_FILE, index=False)
                         st.success("ස්ථානය සාර්ථකව Save විය!")
-                        st.query_params.clear() # Clear temporary URL params after saving
+                        st.query_params.clear()
                         st.rerun()
 
     else:
