@@ -3,44 +3,27 @@ import pandas as pd
 import os
 import glob
 
-# Page Config
 st.set_page_config(page_title="Customer Location Finder", page_icon="📍", layout="wide")
 
 LOCATIONS_FILE = "customer_locations.csv"
 
-# Cache එක ඉවත් කර සෑම විටම අලුතින් Read කිරීමට (ttl=0)
 @st.cache_data(ttl=0)
-def get_dataset():
-    # Folder එකේ ඇති Excel File සොයා ගැනීම
+def load_excel_data():
     files = glob.glob("*.xlsx") + glob.glob("*.xls")
     if not files:
         return None, "No Excel file found in root directory!"
     
     file_path = files[0]
-    
     try:
-        # Sheet එක Read කිරීම
         df = pd.read_excel(file_path)
+        df.columns = df.columns.astype(str).str.strip()
+        
+        # සියලුම columns එකතු කර එකම Full_Search_Text column එකක් සෑදීම
+        df['Full_Search_Text'] = df.astype(str).apply(lambda row: ' '.join(row.values).lower(), axis=1)
+        
+        return df, os.path.basename(file_path)
     except Exception as e:
-        return None, f"Error reading excel: {e}"
-
-    # Column names clean කිරීම
-    df.columns = df.columns.astype(str).str.strip()
-
-    # Data Clean කර ගැනීම (Search පහසු කිරීමට)
-    def clean_val(v):
-        if pd.isna(v) or v is None:
-            return ""
-        if isinstance(v, float) and v.is_integer():
-            v = int(v)
-        return str(v).strip()
-
-    df['NIC_Clean'] = df['Customer NIC'].apply(clean_val) if 'Customer NIC' in df.columns else ""
-    df['Code_Clean'] = df['Customer Code'].apply(clean_val) if 'Customer Code' in df.columns else ""
-    df['Facility_Clean'] = df['Facility Status'].apply(clean_val) if 'Facility Status' in df.columns else ""
-    df['Name_Clean'] = df['Customer Name'].apply(clean_val) if 'Customer Name' in df.columns else ""
-
-    return df, os.path.basename(file_path)
+        return None, f"Error reading excel file: {e}"
 
 def load_locations():
     if os.path.exists(LOCATIONS_FILE):
@@ -50,52 +33,62 @@ def load_locations():
         'Address', 'Landmark', 'Latitude', 'Longitude', 'Updated By'
     ])
 
-# Streamlit App UI
 st.title("📍 Customer Location Lookup & Entry")
 
-df, filename = get_dataset()
+df, file_status = load_excel_data()
 df_locs = load_locations()
 
 if df is None:
-    st.error(filename)
+    st.error(f"❌ {file_status}")
+    st.info("💡 කරුණාකර Excel ගොනුව GitHub Repository එකට හරියාකාරව Upload කර ඇත්දැයි බලන්න.")
 else:
-    st.success(f"📁 Loaded File: **{filename}** | 📊 Total Customers: **{len(df)}**")
+    st.success(f"📁 Loaded File: **{file_status}** | 📊 Total Records: **{len(df)}**")
+
+    # Debug Section (Show Columns & Sample Data)
+    with st.expander("🔍 View Detected Excel Columns & Data Preview"):
+        st.write("**Detected Columns in Excel:**", list(df.columns))
+        st.dataframe(df.head(5))
+
+    st.divider()
 
     # Search Bar
-    query = st.text_input("🔍 Search Customer (Type NIC / Customer Code / Name / Facility No):", "").strip()
+    query = st.text_input("🔍 Enter Search Term (NIC / Customer Code / Name / Facility No):", "").strip().lower()
 
     if query:
-        q = query.lower()
-        # Case-insensitive substring matching
-        match_mask = (
-            df['NIC_Clean'].str.lower().str.contains(q, na=False) |
-            df['Code_Clean'].str.lower().str.contains(q, na=False) |
-            df['Facility_Clean'].str.lower().str.contains(q, na=False) |
-            df['Name_Clean'].str.lower().str.contains(q, na=False)
-        )
-        matched_df = df[match_mask]
+        # Full Text Match across all fields
+        matched_df = df[df['Full_Search_Text'].str.contains(query, regex=False, na=False)]
 
         if matched_df.empty:
-            st.warning(f"❌ '{query}' සඳහා කිසිදු පාරිභෝගිකයෙකු හමු නොවීය (No records found).")
+            st.error(f"❌ No records found matching: **'{query}'**")
         else:
-            st.success(f"✅ පාරිභෝගිකයින් {len(matched_df)} දෙනෙකු හමු විය.")
+            st.success(f"✅ Found **{len(matched_df)}** matching record(s).")
 
             for idx, row in matched_df.iterrows():
                 st.divider()
                 col1, col2 = st.columns([1, 1])
 
-                with col1:
-                    st.subheader("📋 Customer Information")
-                    st.write(f"**Name:** {row.get('Customer Name', 'N/A')}")
-                    st.write(f"**NIC:** {row.get('Customer NIC', 'N/A')}")
-                    st.write(f"**Customer Code:** {row.get('Customer Code', 'N/A')}")
-                    st.write(f"**Facility Status/No:** {row.get('Facility Status', 'N/A')}")
-                    st.write(f"**Center:** {row.get('Center', 'N/A')} ({row.get('Branch', 'N/A')})")
-                    st.write(f"**Contact No:** {row.get('Customer Contact No', 'N/A')}")
-                    st.write(f"**Total Arrears:** {row.get('Total Arrears', 'N/A')}")
+                # Get Values safely using column fallback
+                nic_val = row.get('Customer NIC', row.get('NIC', 'N/A'))
+                code_val = row.get('Customer Code', row.get('Code', 'N/A'))
+                name_val = row.get('Customer Name', row.get('Name', 'N/A'))
+                fac_val = row.get('Facility Status', row.get('Facility Code', 'N/A'))
+                center_val = row.get('Center', 'N/A')
+                branch_val = row.get('Branch', 'N/A')
+                contact_val = row.get('Customer Contact No', 'N/A')
+                arrears_val = row.get('Total Arrears', 'N/A')
 
-                cust_code = str(row['Code_Clean'])
-                saved_loc = df_locs[df_locs['Customer Code'] == cust_code]
+                with col1:
+                    st.subheader("📋 Customer Details")
+                    st.write(f"**Customer Name:** {name_val}")
+                    st.write(f"**NIC Number:** {nic_val}")
+                    st.write(f"**Customer Code:** {code_val}")
+                    st.write(f"**Facility Status/No:** {fac_val}")
+                    st.write(f"**Center / Branch:** {center_val} ({branch_val})")
+                    st.write(f"**Contact No:** {contact_val}")
+                    st.write(f"**Total Arrears:** {arrears_val}")
+
+                cust_code_str = str(code_val).strip()
+                saved_loc = df_locs[df_locs['Customer Code'] == cust_code_str]
 
                 with col2:
                     st.subheader("🗺️ Location Details")
@@ -112,7 +105,7 @@ else:
                         st.warning("⚠️ නොදන්නා ස්ථානයකි (No location saved yet).")
 
                     with st.form(key=f"form_{idx}"):
-                        st.markdown("**Enter / Update Location:**")
+                        st.markdown("**Enter / Update Location Information:**")
                         addr = st.text_area("Address / Directions", value=saved_loc.iloc[-1]['Address'] if not saved_loc.empty else "")
                         land = st.text_input("Landmark", value=saved_loc.iloc[-1]['Landmark'] if not saved_loc.empty else "")
                         
@@ -126,9 +119,9 @@ else:
                         
                         if st.form_submit_button("Save Location"):
                             new_row = pd.DataFrame([{
-                                'Customer Code': cust_code,
-                                'Customer NIC': str(row['NIC_Clean']),
-                                'Facility Code': str(row['Facility_Clean']),
+                                'Customer Code': cust_code_str,
+                                'Customer NIC': str(nic_val),
+                                'Facility Code': str(fac_val),
                                 'Address': addr,
                                 'Landmark': land,
                                 'Latitude': lat,
@@ -141,4 +134,4 @@ else:
                             st.rerun()
 
     else:
-        st.info("💡 සෙවීම සඳහා උඩ Search Bar එකේ NIC / Name / Customer Code ටයිප් කරන්න.")
+        st.info("💡 සෙවීම සඳහා උඩ Search Bar එකේ NIC / Name / Customer Code හි කොටසක් ටයිප් කරන්න.")
