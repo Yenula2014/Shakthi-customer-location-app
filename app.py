@@ -8,6 +8,13 @@ st.set_page_config(page_title="Customer Location Tracker", page_icon="📍", lay
 
 LOCATIONS_FILE = "customer_locations.csv"
 
+def clean_text(val):
+    """NaN, None හෝ Float අගයන් ආරක්ෂිතව Clean Text බවට හැරවීමට"""
+    if pd.isna(val) or val is None:
+        return ""
+    val_str = str(val).strip()
+    return "" if val_str.lower() in ["nan", "none", "null"] else val_str
+
 @st.cache_data(ttl=0)
 def load_data():
     files = glob.glob("*.xlsx") + glob.glob("*.xls")
@@ -16,7 +23,6 @@ def load_data():
     file_path = files[0]
     try:
         df = pd.read_excel(file_path)
-        # Check header row
         cols_str = " ".join([str(c) for c in df.columns]).lower()
         if "unnamed" in cols_str or "customer nic" not in cols_str:
             for r in range(1, 5):
@@ -40,11 +46,7 @@ def get_col_val(row, targets):
     for col in row.index:
         if str(col).strip().lower() in [t.lower() for t in targets]:
             val = row[col]
-            if pd.isna(val) or str(val).lower() in ['nan', 'none']:
-                return "N/A"
-            if isinstance(val, float) and val.is_integer():
-                return str(int(val))
-            return str(val).strip()
+            return clean_text(val) if clean_text(val) else "N/A"
     return "N/A"
 
 df = load_data()
@@ -78,36 +80,44 @@ else:
                 st.subheader(f"👤 {name_val}")
                 st.write(f"**NIC:** `{nic_val}` | **Code:** `{code_val}` | **Facility:** `{fac_val}`")
 
-                # Saved Location Details & Map Link
+                # Existing Location Check
+                has_loc = False
+                existing_addr, existing_land, existing_lat, existing_lon = "", "", "", ""
+
                 if not saved_loc.empty:
                     loc_data = saved_loc.iloc[-1]
-                    st.success("📍 **ස්ථානය Save කර ඇත**")
-                    if loc_data.get('Address'):
-                        st.write(f"**Address:** {loc_data['Address']}")
-                    if loc_data.get('Landmark'):
-                        st.write(f"**Landmark:** {loc_data['Landmark']}")
-                    
-                    lat = loc_data.get('Latitude', '').strip()
-                    lon = loc_data.get('Longitude', '').strip()
-                    
-                    if lat and lon:
-                        st.write(f"**GPS Coordinates:** `{lat}, {lon}`")
-                        maps_url = f"https://www.google.com/maps/dir/?api=1&destination={lat},{lon}"
-                        st.markdown(f"[🚗 Open Google Maps Navigation]({maps_url})", unsafe_allow_html=True)
-                else:
+                    existing_addr = clean_text(loc_data.get('Address'))
+                    existing_land = clean_text(loc_data.get('Landmark'))
+                    existing_lat = clean_text(loc_data.get('Latitude'))
+                    existing_lon = clean_text(loc_data.get('Longitude'))
+
+                    if existing_addr or existing_land or (existing_lat and existing_lon):
+                        has_loc = True
+                        st.success("📍 **ස්ථානය Save කර ඇත**")
+                        if existing_addr:
+                            st.write(f"**Address:** {existing_addr}")
+                        if existing_land:
+                            st.write(f"**Landmark:** {existing_land}")
+                        
+                        if existing_lat and existing_lon:
+                            st.write(f"**GPS Coordinates:** `{existing_lat}, {existing_lon}`")
+                            maps_url = f"https://www.google.com/maps/dir/?api=1&destination={existing_lat},{existing_lon}"
+                            st.markdown(f"[🚗 Open Google Maps Navigation]({maps_url})", unsafe_allow_html=True)
+
+                if not has_loc:
                     st.info("ℹ️ ස්ථානය තවම Save කර නොමැත.")
 
                 # Location Form
                 with st.form(key=f"form_{idx}"):
                     st.markdown("**Update / Save Location Details:**")
-                    address = st.text_area("ලිපිනය / පාර (Address / Directions)", value=saved_loc.iloc[-1]['Address'] if not saved_loc.empty else "", height=70)
-                    landmark = st.text_input("ආසන්නතම සලකුණ (Landmark)", value=saved_loc.iloc[-1]['Landmark'] if not saved_loc.empty else "")
+                    address = st.text_area("ලිපිනය / පාර (Address / Directions)", value=existing_addr, height=70)
+                    landmark = st.text_input("ආසන්නතම සලකුණ (Landmark)", value=existing_land)
                     
                     c1, c2 = st.columns(2)
                     with c1:
-                        latitude = st.text_input("අක්ෂාංශ (Latitude)", value=saved_loc.iloc[-1]['Latitude'] if not saved_loc.empty else "")
+                        latitude = st.text_input("අක්ෂාංශ (Latitude)", value=existing_lat)
                     with c2:
-                        longitude = st.text_input("දේශාංශ (Longitude)", value=saved_loc.iloc[-1]['Longitude'] if not saved_loc.empty else "")
+                        longitude = st.text_input("දේශාංශ (Longitude)", value=existing_lon)
 
                     officer = st.text_input("Officer ID / Name", value="")
 
@@ -116,11 +126,11 @@ else:
                             'Customer Code': cust_code_str,
                             'Customer NIC': str(nic_val),
                             'Facility Code': str(fac_val),
-                            'Address': address,
-                            'Landmark': landmark,
-                            'Latitude': latitude,
-                            'Longitude': longitude,
-                            'Updated By': officer
+                            'Address': address.strip(),
+                            'Landmark': landmark.strip(),
+                            'Latitude': latitude.strip(),
+                            'Longitude': longitude.strip(),
+                            'Updated By': officer.strip()
                         }])
                         df_locs = pd.concat([df_locs, new_record], ignore_index=True)
                         df_locs.to_csv(LOCATIONS_FILE, index=False)
