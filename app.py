@@ -10,7 +10,7 @@ import glob
 st.set_page_config(page_title="Customer Location Tracker", page_icon="📍", layout="centered")
 
 # 🔗 ඔබගේ Google Apps Script Web App URL එක මෙතැනට දමන්න
-WEB_APP_URL = https://script.google.com/macros/s/AKfycbzyBmF1brakYllsKQOD3o55SOS1loZ76jlhfjPJbIdKzowPGbDPBQ5bSJVOCF0WTc9w-A/exec
+WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzyBmF1brakYllsKQOD3o55SOS1loZ76jlhfjPJbIdKzowPGbDPBQ5bSJVOCF0WTc9w-A/exec"
 LOCATIONS_FILE = "customer_locations.csv"
 
 def clean_text(val):
