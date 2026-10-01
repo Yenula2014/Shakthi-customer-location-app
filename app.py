@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import os
 import glob
@@ -38,8 +39,21 @@ def load_data():
 
 def load_locations():
     if os.path.exists(LOCATIONS_FILE):
-        return pd.read_csv(LOCATIONS_FILE, dtype=str)
+        try:
+            return pd.read_csv(LOCATIONS_FILE, dtype=str)
+        except Exception:
+            pass
     return pd.DataFrame(columns=['Customer Code', 'Customer NIC', 'Facility Code', 'Address', 'Landmark', 'Latitude', 'Longitude', 'Updated By'])
+
+def save_location_data(new_record):
+    df_locs = load_locations()
+    df_locs = pd.concat([df_locs, new_record], ignore_index=True)
+    try:
+        df_locs.to_csv(LOCATIONS_FILE, index=False)
+        return True
+    except Exception as e:
+        st.error(f"Data Save කිරීමේ දෝෂයක්: {e}")
+        return False
 
 def get_col_val(row, targets):
     for col in row.index:
@@ -49,7 +63,6 @@ def get_col_val(row, targets):
     return "N/A"
 
 def multi_word_match(row_text, search_query):
-    """නමේ/විස්තරයේ ඕනෑම තැනක ඇති වචන කිහිපයක් match වනවාදැයි පරීක්ෂා කිරීම"""
     words = search_query.strip().lower().split()
     return all(word in row_text for word in words)
 
@@ -61,11 +74,9 @@ st.title("📍 Field Location Capture App")
 if df is None:
     st.error("Excel File එක සොයාගත නොහැක!")
 else:
-    # Flexible Search Input
-    search_query = st.text_input("🔍 Customer සොයන්න (නම, NIC, Code, Facility හි කොටසක් ටයිප් කරන්න):", "").strip()
+    search_query = st.text_input("🔍 Customer සොයන්න (නම, NIC, Code, Facility):", "").strip()
 
     if search_query:
-        # Multi-word matching logic
         matched_mask = df['Full_Search'].apply(lambda x: multi_word_match(x, search_query))
         matched_df = df[matched_mask]
 
@@ -87,7 +98,6 @@ else:
                 st.subheader(f"👤 {name_val}")
                 st.write(f"**NIC:** `{nic_val}` | **Code:** `{code_val}` | **Facility:** `{fac_val}`")
 
-                # Existing Location Check
                 has_loc = False
                 existing_addr, existing_land, existing_lat, existing_lon = "", "", "", ""
 
@@ -112,11 +122,60 @@ else:
                             st.markdown(f"[🚗 Open Google Maps Navigation]({maps_url})", unsafe_allow_html=True)
 
                 if not has_loc:
-                    st.info("ℹ️ ස්ථානය තවම Save කර නොමැත.")
+                    st.info("ℹ️️ ස්ථානය තවම Save කර නොමැත.")
 
-                # Location Form
+                # Fast GPS Capture Component
+                components.html(
+                    f"""
+                    <div style="margin-bottom: 10px;">
+                        <button onclick="getFastLocation_{idx}()" style="background-color:#16A34A;color:white;padding:12px;border:none;border-radius:6px;font-weight:bold;cursor:pointer;width:100%;font-size:15px;">
+                            🎯 Capture My Current GPS Location
+                        </button>
+                        <div id="status_{idx}" style="font-size:13px; font-weight:bold; color:#2563EB; margin-top:6px;"></div>
+                    </div>
+
+                    <script>
+                    function getFastLocation_{idx}() {{
+                        var status = document.getElementById("status_{idx}");
+                        status.innerHTML = "⌛ GPS ස්ථානය සොයමින් පවතී...";
+
+                        if (!navigator.geolocation) {{
+                            status.innerHTML = "❌ Geolocation Supported නැත.";
+                            return;
+                        }}
+
+                        navigator.geolocation.getCurrentPosition(
+                            function(pos) {{
+                                var lat = pos.coords.latitude.toFixed(6);
+                                var lon = pos.coords.longitude.toFixed(6);
+
+                                var parentInputs = window.parent.document.querySelectorAll('input[type="text"]');
+                                parentInputs.forEach(function(input) {{
+                                    if (input.ariaLabel && input.ariaLabel.includes("Latitude")) {{
+                                        input.value = lat;
+                                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                    }}
+                                    if (input.ariaLabel && input.ariaLabel.includes("Longitude")) {{
+                                        input.value = lon;
+                                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                                    }}
+                                }});
+                                status.innerHTML = "✅ GPS Filled: " + lat + ", " + lon;
+                            }},
+                            function(err) {{
+                                status.innerHTML = "❌ GPS Error: " + err.message;
+                            }},
+                            {{ enableHighAccuracy: true, timeout: 10000 }}
+                        );
+                    }}
+                    </script>
+                    """,
+                    height=80
+                )
+
+                # Form for Location Saving
                 with st.form(key=f"form_{idx}"):
-                    st.markdown("**📌 Location & GPS Details:**")
+                    st.markdown("**📌 Location Details:**")
                     address = st.text_area("ලිපිනය / පාර (Address / Directions)", value=existing_addr, height=70)
                     landmark = st.text_input("ආසන්නතම සලකුණ (Landmark)", value=existing_land)
                     
@@ -141,72 +200,10 @@ else:
                             'Longitude': longitude.strip(),
                             'Updated By': officer.strip()
                         }])
-                        df_locs = pd.concat([df_locs, new_record], ignore_index=True)
-                        df_locs.to_csv(LOCATIONS_FILE, index=False)
-                        st.success("ස්ථානය සාර්ථකව Save විය!")
-                        st.rerun()
-
-                # Fast JavaScript Direct Auto-Fill Component (Outside Form to avoid block)
-                st.components.v1.html(
-                    f"""
-                    <div style="margin-top: -10px; margin-bottom: 15px;">
-                        <button onclick="getFastLocation_{idx}()" style="background-color:#16A34A;color:white;padding:12px;border:none;border-radius:6px;font-weight:bold;cursor:pointer;width:100%;font-size:15px;">
-                            🎯 Capture My Current GPS Location (Instant Fill)
-                        </button>
-                        <div id="status_{idx}" style="font-size:13px; font-weight:bold; color:#2563EB; margin-top:6px;"></div>
-                    </div>
-
-                    <script>
-                    function getFastLocation_{idx}() {{
-                        var status = document.getElementById("status_{idx}");
-                        status.innerHTML = "⌛ GPS ස්ථානය සොයමින් පවතී...";
-
-                        if (!navigator.geolocation) {{
-                            status.innerHTML = "❌ ඔබගේ Browser එක Geolocation සපයන්නේ නැත.";
-                            return;
-                        }}
-
-                        navigator.geolocation.getCurrentPosition(
-                            function(pos) {{
-                                var lat = pos.coords.latitude.toFixed(6);
-                                var lon = pos.coords.longitude.toFixed(6);
-
-                                // Parent window එකේ ඇති inputs වලට 직접 values fill කිරීම
-                                try {{
-                                    var parentInputs = window.parent.document.querySelectorAll('input[type="text"]');
-                                    var filled = false;
-
-                                    // Direct filling into Streamlit DOM inputs
-                                    parentInputs.forEach(function(input) {{
-                                        if (input.ariaLabel && input.ariaLabel.includes("Latitude")) {{
-                                            input.value = lat;
-                                            input.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                                        }}
-                                        if (input.ariaLabel && input.ariaLabel.includes("Longitude")) {{
-                                            input.value = lon;
-                                            input.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                                        }}
-                                    }});
-
-                                    status.innerHTML = "✅ GPS Auto-Filled: " + lat + ", " + lon;
-                                }} catch(e) {{
-                                    // Fallback to URL method if DOM access blocked
-                                    var url = new URL(window.parent.location.href);
-                                    url.searchParams.set('lat', lat);
-                                    url.searchParams.set('lon', lon);
-                                    window.parent.location.href = url.href;
-                                }}
-                            }},
-                            function(err) {{
-                                status.innerHTML = "❌ GPS Error: " + err.message + " (කරුණාකර Phone එකේ GPS / Location Access On කර ඇත්දැයි බලන්න)";
-                            }},
-                            {{ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }}
-                        );
-                    }}
-                    </script>
-                    """,
-                    height=90
-                )
+                        
+                        if save_location_data(new_record):
+                            st.success("ස්ථානය සාර්ථකව Save විය!")
+                            st.rerun()
 
     else:
         st.info("💡 සෙවීම සඳහා උඩ Search Bar එකේ Customer ගේ නම, NIC, Code හෝ Facility No හි කොටසක් ටයිප් කරන්න.")
