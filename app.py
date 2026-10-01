@@ -71,6 +71,11 @@ df_locs = load_locations()
 
 st.title("📍 Field Location Capture App")
 
+# URL / Query Params මගින් Capture කළ GPS ලබාගැනීම
+query_params = st.query_params
+captured_lat = query_params.get("lat", "")
+captured_lon = query_params.get("lon", "")
+
 if df is None:
     st.error("Excel File එක සොයාගත නොහැක!")
 else:
@@ -122,14 +127,14 @@ else:
                             st.markdown(f"[🚗 Open Google Maps Navigation]({maps_url})", unsafe_allow_html=True)
 
                 if not has_loc:
-                    st.info("ℹ️️ ස්ථානය තවම Save කර නොමැත.")
+                    st.info("ℹ️ ස්ථානය තවම Save කර නොමැත.")
 
-                # Fast GPS Capture Component
+                # Fast GPS Capture via Native Query Param Updating
                 components.html(
                     f"""
                     <div style="margin-bottom: 10px;">
                         <button onclick="getFastLocation_{idx}()" style="background-color:#16A34A;color:white;padding:12px;border:none;border-radius:6px;font-weight:bold;cursor:pointer;width:100%;font-size:15px;">
-                            🎯 Capture My Current GPS Location
+                            🎯 Capture Current GPS Location
                         </button>
                         <div id="status_{idx}" style="font-size:13px; font-weight:bold; color:#2563EB; margin-top:6px;"></div>
                     </div>
@@ -149,29 +154,26 @@ else:
                                 var lat = pos.coords.latitude.toFixed(6);
                                 var lon = pos.coords.longitude.toFixed(6);
 
-                                var parentInputs = window.parent.document.querySelectorAll('input[type="text"]');
-                                parentInputs.forEach(function(input) {{
-                                    if (input.ariaLabel && input.ariaLabel.includes("Latitude")) {{
-                                        input.value = lat;
-                                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                                    }}
-                                    if (input.ariaLabel && input.ariaLabel.includes("Longitude")) {{
-                                        input.value = lon;
-                                        input.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                                    }}
-                                }});
-                                status.innerHTML = "✅ GPS Filled: " + lat + ", " + lon;
+                                // Pass directly to Streamlit Python URL Params
+                                var url = new URL(window.parent.location.href);
+                                url.searchParams.set('lat', lat);
+                                url.searchParams.set('lon', lon);
+                                window.parent.location.href = url.href;
                             }},
                             function(err) {{
                                 status.innerHTML = "❌ GPS Error: " + err.message;
                             }},
-                            {{ enableHighAccuracy: true, timeout: 10000 }}
+                            {{ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }}
                         );
                     }}
                     </script>
                     """,
                     height=80
                 )
+
+                # Auto Fill Priority: Captured GPS > Saved DB GPS
+                final_lat = captured_lat if captured_lat else existing_lat
+                final_lon = captured_lon if captured_lon else existing_lon
 
                 # Form for Location Saving
                 with st.form(key=f"form_{idx}"):
@@ -181,9 +183,9 @@ else:
                     
                     c1, c2 = st.columns(2)
                     with c1:
-                        latitude = st.text_input("අක්ෂාංශ (Latitude)", value=existing_lat, key=f"lat_{idx}")
+                        latitude = st.text_input("අක්ෂාංශ (Latitude)", value=final_lat, key=f"lat_{idx}")
                     with c2:
-                        longitude = st.text_input("දේශාංශ (Longitude)", value=existing_lon, key=f"lon_{idx}")
+                        longitude = st.text_input("දේශාංශ (Longitude)", value=final_lon, key=f"lon_{idx}")
 
                     officer = st.text_input("Officer ID / Name", value="")
 
@@ -203,6 +205,7 @@ else:
                         
                         if save_location_data(new_record):
                             st.success("ස්ථානය සාර්ථකව Save විය!")
+                            st.query_params.clear()  # Clear temporary GPS from URL
                             st.rerun()
 
     else:
