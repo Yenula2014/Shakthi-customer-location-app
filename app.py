@@ -1,13 +1,17 @@
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
-import os
+from streamlit_gsheets import GSheetsConnection
 import glob
 
 # Page Setup
 st.set_page_config(page_title="Customer Location Tracker", page_icon="📍", layout="centered")
 
-LOCATIONS_FILE = "customer_locations.csv"
+# 🔗 ඔබගේ Google Sheet එකෙහි Public Link එක මෙතැනට දමන්න
+GOOGLE_SHEET_URL = https://docs.google.com/spreadsheets/d/1i0_xtbb93kiGPhHtAb57v6oeUmkQbG-LrjjxI0wVuOQ/edit?usp=sharing
+
+# GSheets Connection Initializing
+conn = st.connection("gsheets", type=GSheetsConnection)
 
 def clean_text(val):
     if pd.isna(val) or val is None:
@@ -16,7 +20,7 @@ def clean_text(val):
     return "" if val_str.lower() in ["nan", "none", "null"] else val_str
 
 @st.cache_data(ttl=0)
-def load_data():
+def load_excel_data():
     files = glob.glob("*.xlsx") + glob.glob("*.xls")
     if not files:
         return None
@@ -37,22 +41,21 @@ def load_data():
     except Exception:
         return None
 
-def load_locations():
-    if os.path.exists(LOCATIONS_FILE):
-        try:
-            return pd.read_csv(LOCATIONS_FILE, dtype=str)
-        except Exception:
-            pass
-    return pd.DataFrame(columns=['Customer Code', 'Customer NIC', 'Facility Code', 'Address', 'Landmark', 'Latitude', 'Longitude', 'Updated By'])
-
-def save_location_data(new_record):
-    df_locs = load_locations()
-    df_locs = pd.concat([df_locs, new_record], ignore_index=True)
+def load_locations_from_gsheets():
     try:
-        df_locs.to_csv(LOCATIONS_FILE, index=False)
+        df = conn.read(spreadsheet=GOOGLE_SHEET_URL, ttl=0)
+        return df.astype(str)
+    except Exception:
+        return pd.DataFrame(columns=['Customer Code', 'Customer NIC', 'Facility Code', 'Address', 'Landmark', 'Latitude', 'Longitude', 'Updated By'])
+
+def save_location_to_gsheets(new_record):
+    try:
+        df_existing = load_locations_from_gsheets()
+        updated_df = pd.concat([df_existing, new_record], ignore_index=True)
+        conn.update(spreadsheet=GOOGLE_SHEET_URL, data=updated_df)
         return True
     except Exception as e:
-        st.error(f"Data Save කිරීමේ දෝෂයක්: {e}")
+        st.error(f"Google Sheet එකට Save කිරීමේ දෝෂයක්: {e}")
         return False
 
 def get_col_val(row, targets):
@@ -66,12 +69,12 @@ def multi_word_match(row_text, search_query):
     words = search_query.strip().lower().split()
     return all(word in row_text for word in words)
 
-df = load_data()
-df_locs = load_locations()
+df = load_excel_data()
+df_locs = load_locations_from_gsheets()
 
 st.title("📍 Field Location Capture App")
 
-# URL / Query Params මගින් Capture කළ GPS ලබාගැනීම
+# Query Params වලින් GPS ලබාගැනීම
 query_params = st.query_params
 captured_lat = query_params.get("lat", "")
 captured_lon = query_params.get("lon", "")
@@ -97,7 +100,7 @@ else:
                 fac_val = get_col_val(row, ['Facility Status', 'Facility Code'])
 
                 cust_code_str = str(code_val).strip()
-                saved_loc = df_locs[df_locs['Customer Code'] == cust_code_str]
+                saved_loc = df_locs[df_locs['Customer Code'] == cust_code_str] if not df_locs.empty else pd.DataFrame()
 
                 st.markdown("---")
                 st.subheader(f"👤 {name_val}")
@@ -115,7 +118,7 @@ else:
 
                     if existing_addr or existing_land or (existing_lat and existing_lon):
                         has_loc = True
-                        st.success("📍 **ස්ථානය Save කර ඇත**")
+                        st.success("📍 **ස්ථානය Save කර ඇත (Google Sheets)**")
                         if existing_addr:
                             st.write(f"**Address:** {existing_addr}")
                         if existing_land:
@@ -129,7 +132,7 @@ else:
                 if not has_loc:
                     st.info("ℹ️ ස්ථානය තවම Save කර නොමැත.")
 
-                # Fast GPS Capture via Native Query Param Updating
+                # Fast GPS Capture
                 components.html(
                     f"""
                     <div style="margin-bottom: 10px;">
@@ -154,7 +157,6 @@ else:
                                 var lat = pos.coords.latitude.toFixed(6);
                                 var lon = pos.coords.longitude.toFixed(6);
 
-                                // Pass directly to Streamlit Python URL Params
                                 var url = new URL(window.parent.location.href);
                                 url.searchParams.set('lat', lat);
                                 url.searchParams.set('lon', lon);
@@ -171,7 +173,6 @@ else:
                     height=80
                 )
 
-                # Auto Fill Priority: Captured GPS > Saved DB GPS
                 final_lat = captured_lat if captured_lat else existing_lat
                 final_lon = captured_lon if captured_lon else existing_lon
 
@@ -203,9 +204,9 @@ else:
                             'Updated By': officer.strip()
                         }])
                         
-                        if save_location_data(new_record):
-                            st.success("ස්ථානය සාර්ථකව Save විය!")
-                            st.query_params.clear()  # Clear temporary GPS from URL
+                        if save_location_to_gsheets(new_record):
+                            st.success("ස්ථානය සාර්ථකව Google Sheet එකට Save විය!")
+                            st.query_params.clear()
                             st.rerun()
 
     else:
