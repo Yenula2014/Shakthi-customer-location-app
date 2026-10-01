@@ -9,7 +9,6 @@ import glob
 # Page Setup
 st.set_page_config(page_title="Customer Location Tracker", page_icon="📍", layout="centered")
 
-# 🔗 ඔබගේ Google Apps Script Web App URL එක මෙතැනට දමන්න
 WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzyBmF1brakYllsKQOD3o55SOS1loZ76jlhfjPJbIdKzowPGbDPBQ5bSJVOCF0WTc9w-A/exec"
 LOCATIONS_FILE = "customer_locations.csv"
 
@@ -50,7 +49,6 @@ def load_locations():
     return pd.DataFrame(columns=['Customer Code', 'Customer NIC', 'Facility Code', 'Address', 'Landmark', 'Latitude', 'Longitude', 'Updated By'])
 
 def save_data_webhook(record_dict):
-    # Save locally to CSV
     df_locs = load_locations()
     new_df = pd.DataFrame([record_dict])
     df_locs = pd.concat([df_locs, new_df], ignore_index=True)
@@ -59,7 +57,6 @@ def save_data_webhook(record_dict):
     except Exception:
         pass
 
-    # Send to Google Sheet if WebApp URL is configured
     if "script.google.com" in WEB_APP_URL:
         try:
             payload = {
@@ -79,7 +76,7 @@ def save_data_webhook(record_dict):
                 method='POST'
             )
             urllib.request.urlopen(req, timeout=5)
-        except Exception as e:
+        except Exception:
             pass
     return True
 
@@ -94,14 +91,75 @@ def multi_word_match(row_text, search_query):
     words = search_query.strip().lower().split()
     return all(word in row_text for word in words)
 
+# URL Parameters හරහා GPS ලබාගැනීම
+query_params = st.query_params
+captured_lat = query_params.get("lat", "")
+captured_lon = query_params.get("lon", "")
+get_gps = query_params.get("get_gps", "")
+
+# 🎯 Standalone HTML Page for Direct Browser Geolocation
+if get_gps == "1":
+    gps_html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <style>
+            body { font-family: sans-serif; text-align: center; padding: 40px 20px; background: #f8fafc; color: #1e293b; }
+            .card { background: white; padding: 30px; border-radius: 12px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1); max-width: 400px; margin: 0 auto; }
+            .btn { background: #16a34a; color: white; border: none; padding: 14px 24px; font-size: 16px; font-weight: bold; border-radius: 8px; width: 100%; cursor: pointer; }
+            .status { margin-top: 15px; font-size: 14px; color: #2563eb; font-weight: bold; }
+        </style>
+    </head>
+    <body>
+        <div class="card">
+            <h2>🎯 GPS Location Fetch</h2>
+            <p>කරුණාකර පහත Button එක ක්ලික් කර Browser එකෙන් <b>Allow Location</b> ලබාදෙන්න.</p>
+            <button class="btn" onclick="fetchGPS()">📍 Get Current Location</button>
+            <div id="status" class="status"></div>
+        </div>
+
+        <script>
+        function fetchGPS() {
+            var status = document.getElementById("status");
+            status.innerHTML = "⌛ GPS ස්ථානය ලබාගනිමින් පවතී...";
+
+            if (!navigator.geolocation) {
+                status.innerHTML = "❌ ඔබගේ Browser එක Geolocation සපයන්නේ නැත.";
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                function(pos) {
+                    var lat = pos.coords.latitude.toFixed(6);
+                    var lon = pos.coords.longitude.toFixed(6);
+                    status.innerHTML = "✅ GPS හමුවිය! App එක වෙත මාරු වෙමින් පවතී...";
+                    
+                    var url = new URL(window.location.href);
+                    url.searchParams.delete('get_gps');
+                    url.searchParams.set('lat', lat);
+                    url.searchParams.set('lon', lon);
+                    window.location.href = url.href;
+                },
+                function(err) {
+                    status.innerHTML = "❌ GPS ලබාගත නොහැකි විය: " + err.message + "<br><small>කරුණාකර Phone එකේ GPS / Location Access On කර ඇත්දැයි බලන්න.</small>";
+                },
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+            );
+        }
+        // Auto trigger on load
+        window.onload = fetchGPS;
+        </script>
+    </body>
+    </html>
+    """
+    components.html(gps_html, height=450, scrolling=True)
+    st.stop()
+
 df = load_excel_data()
 df_locs = load_locations()
 
 st.title("📍 Field Location Capture App")
-
-query_params = st.query_params
-captured_lat = query_params.get("lat", "")
-captured_lon = query_params.get("lon", "")
 
 if df is None:
     st.error("Excel File එක සොයාගත නොහැක!")
@@ -156,45 +214,16 @@ else:
                 if not has_loc:
                     st.info("ℹ️ ස්ථානය තවම Save කර නොමැත.")
 
-                # Fast GPS Capture
-                components.html(
+                # Direct Safe GPS Capture Button
+                st.markdown(
                     f"""
-                    <div style="margin-bottom: 10px;">
-                        <button onclick="getFastLocation_{idx}()" style="background-color:#16A34A;color:white;padding:12px;border:none;border-radius:6px;font-weight:bold;cursor:pointer;width:100%;font-size:15px;">
+                    <a href="?get_gps=1&search={search_query}" target="_self" style="text-decoration:none;">
+                        <div style="background-color:#16A34A; color:white; text-align:center; padding:12px; border-radius:8px; font-weight:bold; font-size:15px; margin-bottom:15px;">
                             🎯 Capture Current GPS Location
-                        </button>
-                        <div id="status_{idx}" style="font-size:13px; font-weight:bold; color:#2563EB; margin-top:6px;"></div>
-                    </div>
-
-                    <script>
-                    function getFastLocation_{idx}() {{
-                        var status = document.getElementById("status_{idx}");
-                        status.innerHTML = "⌛ GPS ස්ථානය සොයමින් පවතී...";
-
-                        if (!navigator.geolocation) {{
-                            status.innerHTML = "❌ Geolocation Supported නැත.";
-                            return;
-                        }}
-
-                        navigator.geolocation.getCurrentPosition(
-                            function(pos) {{
-                                var lat = pos.coords.latitude.toFixed(6);
-                                var lon = pos.coords.longitude.toFixed(6);
-
-                                var url = new URL(window.parent.location.href);
-                                url.searchParams.set('lat', lat);
-                                url.searchParams.set('lon', lon);
-                                window.parent.location.href = url.href;
-                            }},
-                            function(err) {{
-                                status.innerHTML = "❌ GPS Error: " + err.message;
-                            }},
-                            {{ enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }}
-                        );
-                    }}
-                    </script>
+                        </div>
+                    </a>
                     """,
-                    height=80
+                    unsafe_allow_html=True
                 )
 
                 final_lat = captured_lat if captured_lat else existing_lat
