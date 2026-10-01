@@ -1,17 +1,17 @@
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
-from streamlit_gsheets import GSheetsConnection
+import json
+import urllib.request
+import os
 import glob
 
 # Page Setup
 st.set_page_config(page_title="Customer Location Tracker", page_icon="📍", layout="centered")
 
-# 🔗 ඔබගේ Google Sheet එකෙහි Public Link එක මෙතැනට දමන්න
-GOOGLE_SHEET_URL = https://docs.google.com/spreadsheets/d/1i0_xtbb93kiGPhHtAb57v6oeUmkQbG-LrjjxI0wVuOQ/edit?usp=sharing
-
-# GSheets Connection Initializing
-conn = st.connection("gsheets", type=GSheetsConnection)
+# 🔗 ඔබගේ Google Apps Script Web App URL එක මෙතැනට දමන්න
+WEB_APP_URL = https://script.google.com/macros/s/AKfycbzyBmF1brakYllsKQOD3o55SOS1loZ76jlhfjPJbIdKzowPGbDPBQ5bSJVOCF0WTc9w-A/exec
+LOCATIONS_FILE = "customer_locations.csv"
 
 def clean_text(val):
     if pd.isna(val) or val is None:
@@ -41,22 +41,47 @@ def load_excel_data():
     except Exception:
         return None
 
-def load_locations_from_gsheets():
-    try:
-        df = conn.read(spreadsheet=GOOGLE_SHEET_URL, ttl=0)
-        return df.astype(str)
-    except Exception:
-        return pd.DataFrame(columns=['Customer Code', 'Customer NIC', 'Facility Code', 'Address', 'Landmark', 'Latitude', 'Longitude', 'Updated By'])
+def load_locations():
+    if os.path.exists(LOCATIONS_FILE):
+        try:
+            return pd.read_csv(LOCATIONS_FILE, dtype=str)
+        except Exception:
+            pass
+    return pd.DataFrame(columns=['Customer Code', 'Customer NIC', 'Facility Code', 'Address', 'Landmark', 'Latitude', 'Longitude', 'Updated By'])
 
-def save_location_to_gsheets(new_record):
+def save_data_webhook(record_dict):
+    # Save locally to CSV
+    df_locs = load_locations()
+    new_df = pd.DataFrame([record_dict])
+    df_locs = pd.concat([df_locs, new_df], ignore_index=True)
     try:
-        df_existing = load_locations_from_gsheets()
-        updated_df = pd.concat([df_existing, new_record], ignore_index=True)
-        conn.update(spreadsheet=GOOGLE_SHEET_URL, data=updated_df)
-        return True
-    except Exception as e:
-        st.error(f"Google Sheet එකට Save කිරීමේ දෝෂයක්: {e}")
-        return False
+        df_locs.to_csv(LOCATIONS_FILE, index=False)
+    except Exception:
+        pass
+
+    # Send to Google Sheet if WebApp URL is configured
+    if "script.google.com" in WEB_APP_URL:
+        try:
+            payload = {
+                "code": record_dict.get('Customer Code', ''),
+                "nic": record_dict.get('Customer NIC', ''),
+                "facility": record_dict.get('Facility Code', ''),
+                "address": record_dict.get('Address', ''),
+                "landmark": record_dict.get('Landmark', ''),
+                "lat": record_dict.get('Latitude', ''),
+                "lon": record_dict.get('Longitude', ''),
+                "officer": record_dict.get('Updated By', '')
+            }
+            req = urllib.request.Request(
+                WEB_APP_URL, 
+                data=json.dumps(payload).encode('utf-8'),
+                headers={'Content-Type': 'application/json'},
+                method='POST'
+            )
+            urllib.request.urlopen(req, timeout=5)
+        except Exception as e:
+            pass
+    return True
 
 def get_col_val(row, targets):
     for col in row.index:
@@ -70,11 +95,10 @@ def multi_word_match(row_text, search_query):
     return all(word in row_text for word in words)
 
 df = load_excel_data()
-df_locs = load_locations_from_gsheets()
+df_locs = load_locations()
 
 st.title("📍 Field Location Capture App")
 
-# Query Params වලින් GPS ලබාගැනීම
 query_params = st.query_params
 captured_lat = query_params.get("lat", "")
 captured_lon = query_params.get("lon", "")
@@ -118,7 +142,7 @@ else:
 
                     if existing_addr or existing_land or (existing_lat and existing_lon):
                         has_loc = True
-                        st.success("📍 **ස්ථානය Save කර ඇත (Google Sheets)**")
+                        st.success("📍 **ස්ථානය Save කර ඇත**")
                         if existing_addr:
                             st.write(f"**Address:** {existing_addr}")
                         if existing_land:
@@ -193,7 +217,7 @@ else:
                     save_btn = st.form_submit_button("💾 Save Location")
 
                     if save_btn:
-                        new_record = pd.DataFrame([{
+                        record = {
                             'Customer Code': cust_code_str,
                             'Customer NIC': str(nic_val),
                             'Facility Code': str(fac_val),
@@ -202,12 +226,11 @@ else:
                             'Latitude': latitude.strip(),
                             'Longitude': longitude.strip(),
                             'Updated By': officer.strip()
-                        }])
-                        
-                        if save_location_to_gsheets(new_record):
-                            st.success("ස්ථානය සාර්ථකව Google Sheet එකට Save විය!")
-                            st.query_params.clear()
-                            st.rerun()
+                        }
+                        save_data_webhook(record)
+                        st.success("ස්ථානය සාර්ථකව Save විය!")
+                        st.query_params.clear()
+                        st.rerun()
 
     else:
         st.info("💡 සෙවීම සඳහා උඩ Search Bar එකේ Customer ගේ නම, NIC, Code හෝ Facility No හි කොටසක් ටයිප් කරන්න.")
